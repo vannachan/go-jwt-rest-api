@@ -10,6 +10,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type User struct {
@@ -51,12 +52,18 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8000", router))
 }
 
+// HELPER FUNCTIONS
 func respondWithError(w http.ResponseWriter, status int, error Error) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(error)
 	return
 }
 
+func responseJSON(w http.ResponseWriter, data interface{}) {
+	json.NewEncoder(w).Encode(data)
+}
+
+// ROUTER FUNCTION HANDLERS
 func signup(w http.ResponseWriter, r *http.Request) {
 	var user User
 	var error Error
@@ -75,8 +82,27 @@ func signup(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, error) // 400
 	}
 
-	// fmt.Println("signup invoked.")
-	// w.Write([]byte("successfully called signup"))
+	// adding password hashing in case our db gets compromised
+	hash, err := bcrypt.GenerateFromPassword([]byte(user.Password), 10)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// db is expecting a string, convert the hash string of bytes to string
+	user.Password = string(hash)
+
+	// inser to db
+	stmt := "insert into users (email, password) values ($1, $2) RETURNING id;"
+	err = db.QueryRow(stmt, user.Email, user.Password).Scan(&user.ID)
+	if err != nil {
+		error.Message = "Server error."
+		respondWithError(w, http.StatusInternalServerError, error)
+	}
+
+	// since we are returning the user obj, we don't want to show Password
+	user.Password = ""
+	w.Header().Set("Content-Type", "application/json")
+	responseJSON(w, user)
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
