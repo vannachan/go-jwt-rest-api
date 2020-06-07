@@ -1,4 +1,4 @@
-# REST API using Golang and JWT tokens
+# REST API using Golang with JWT tokens and hashed passwords
 
 ## Run
 
