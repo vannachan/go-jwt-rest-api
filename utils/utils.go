@@ -2,9 +2,11 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"go-jwt-rest-api/models"
 
@@ -25,16 +27,6 @@ func ResponseJSON(w http.ResponseWriter, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-func ComparePasswords(hashedPassword string, password []byte) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
-	if err != nil {
-		log.Println(err)
-		return false
-	}
-
-	return true
-}
-
 func GenerateToken(user models.User) (string, error) {
 	var err error
 	// jwt = header.payload.secret
@@ -51,4 +43,50 @@ func GenerateToken(user models.User) (string, error) {
 	}
 
 	return tokenString, nil
+}
+
+func ComparePasswords(hashedPassword string, password []byte) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	return true
+}
+
+func TokenVerifyMiddleWare(next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		bearerToken := strings.Split(authHeader, " ")
+
+		if len(bearerToken) == 2 {
+			authToken := bearerToken[1]
+
+			token, error := jwt.Parse(authToken, func(token *jwt.Token) (interface{}, error) {
+				// validate the algo that we are using
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("There was an error")
+				}
+
+				return []byte(os.Getenv("SECRET")), nil
+			})
+
+			if error != nil {
+				RespondWithError(w, http.StatusUnauthorized, error.Error())
+				return
+			}
+
+			if token.Valid {
+				next.ServeHTTP(w, r)
+			} else {
+				RespondWithError(w, http.StatusUnauthorized, error.Error())
+				return
+			}
+
+		} else {
+			RespondWithError(w, http.StatusUnauthorized, "Invalid token.")
+			return
+		}
+	})
 }

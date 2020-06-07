@@ -3,16 +3,12 @@ package controllers
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"go-jwt-rest-api/models"
+	"go-jwt-rest-api/repository"
 	"go-jwt-rest-api/utils"
 	"log"
 	"net/http"
-	"os"
-	"strings"
 
-	"github.com/davecgh/go-spew/spew"
-	"github.com/dgrijalva/jwt-go"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -23,7 +19,7 @@ func (c Controller) Signup(db *sql.DB) http.HandlerFunc {
 		var user models.User
 
 		json.NewDecoder(r.Body).Decode(&user)
-		spew.Dump(user)
+		// spew.Dump(user)
 
 		if user.Email == "" {
 			utils.RespondWithError(w, http.StatusBadRequest, "Email is missing.") // 400
@@ -45,15 +41,12 @@ func (c Controller) Signup(db *sql.DB) http.HandlerFunc {
 		user.Password = string(hash)
 
 		// inser to db
-		stmt := "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id;"
-		err = db.QueryRow(stmt, user.Email, user.Password).Scan(&user.ID)
+		userRepo := repository.UserRepository{}
+		user = userRepo.Signup(db, user)
 		if err != nil {
 			utils.RespondWithError(w, http.StatusInternalServerError, "Server error.")
 		}
 
-		// since we are returning the user obj, we don't want to show Password
-		user.Password = ""
-		w.Header().Set("Content-Type", "application/json")
 		utils.ResponseJSON(w, user)
 	}
 }
@@ -77,8 +70,8 @@ func (c Controller) Login(db *sql.DB) http.HandlerFunc {
 
 		enteredPassword := user.Password
 
-		row := db.QueryRow("SELECT * FROM users WHERE email = $1", user.Email)
-		err := row.Scan(&user.ID, &user.Email, &user.Password)
+		userRepo := repository.UserRepository{}
+		user, err := userRepo.Login(db, user)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				utils.RespondWithError(w, http.StatusBadRequest, "The user does not exist.")
@@ -107,40 +100,4 @@ func (c Controller) Login(db *sql.DB) http.HandlerFunc {
 			utils.RespondWithError(w, http.StatusUnauthorized, "Invalid Password.")
 		}
 	}
-}
-
-func (c Controller) TokenVerifyMiddleWare(next http.HandlerFunc) http.HandlerFunc {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		bearerToken := strings.Split(authHeader, " ")
-
-		if len(bearerToken) == 2 {
-			authToken := bearerToken[1]
-
-			token, error := jwt.Parse(authToken, func(token *jwt.Token) (interface{}, error) {
-				// validate the algo that we are using
-				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("There was an error")
-				}
-
-				return []byte(os.Getenv("SECRET")), nil
-			})
-
-			if error != nil {
-				utils.RespondWithError(w, http.StatusUnauthorized, error.Error())
-				return
-			}
-
-			if token.Valid {
-				next.ServeHTTP(w, r)
-			} else {
-				utils.RespondWithError(w, http.StatusUnauthorized, error.Error())
-				return
-			}
-
-		} else {
-			utils.RespondWithError(w, http.StatusUnauthorized, "Invalid token.")
-			return
-		}
-	})
 }
